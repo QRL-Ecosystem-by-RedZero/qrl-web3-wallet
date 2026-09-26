@@ -51,7 +51,7 @@ class StringUtil {
       "Private Information": {
         "Hex Seed": accountHexSeed,
         "Mnemonic Phrases": mnemonicPhrases,
-        Note: "This is your secret key(mnemomic phrases, a 32 words combination), and should be kept safe somewhere. This is required to recover your account and to send QRL from your account to others account. If lost, you will lose access to your account and funds.",
+        Note: "This is your secret key(mnemomic phrases, a 34 words combination), and should be kept safe somewhere. This is required to recover your account and to send QRL from your account to others account. If lost, you will lose access to your account and funds.",
       },
     };
     const blobData = JSON.stringify(mnemonicObject, null, 2);

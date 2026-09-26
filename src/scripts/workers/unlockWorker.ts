@@ -1,17 +1,19 @@
 /**
- * Web Worker that performs the CPU-heavy keystore decryption (scrypt / argon2id).
+ * Web Worker that performs the CPU-heavy keystore decryption (argon2id, WASM).
  *
  * Running in a dedicated worker thread keeps the popup UI fully responsive
  * while the decryption is in progress AND avoids Chrome's MV3 service-worker
  * lifecycle issues (Chrome can't kill a worker that runs inside the popup).
  */
 
-import { decrypt, encrypt } from "@theqrl/web3-qrl-accounts";
 import { getMnemonicFromHexSeed } from "@/functions/getMnemonicFromHexSeed";
 import {
-  RECOMMENDED_KEYSTORE_KDF_PARAMS,
-  shouldUpgradeKeystoreParams,
-} from "@/scripts/lockManager/keystoreParams";
+  decryptKeystore,
+  encryptKeystore,
+  isLegacyAddressLabel,
+  toKeystoreAddressLabel,
+} from "@/functions/keystoreCrypto";
+import { shouldUpgradeKeystoreParams } from "@/scripts/lockManager/keystoreParams";
 import type { KeyStore } from "@theqrl/web3";
 
 export type UnlockWorkerRequest = {
@@ -32,8 +34,13 @@ export type UnlockWorkerResponse =
       // KDF parameters. The popup-side persists these in place of the old
       // keystores so the user does not need to take any explicit action.
       upgradedKeystores?: KeyStore[];
+      // Legacy 20-byte address -> current 64-byte address, for keystores
+      // written before QRL testnet v3. The popup migrates stored account data.
+      addressMigrations?: AddressMigration[];
     }
   | { success: false };
+
+export type AddressMigration = { from: string; to: string };
 
 self.onmessage = async (event: MessageEvent<UnlockWorkerRequest>) => {
   const { keystores, password } = event.data;
@@ -43,29 +50,43 @@ self.onmessage = async (event: MessageEvent<UnlockWorkerRequest>) => {
   try {
     const keys: DecryptedKey[] = [];
     let upgradedKeystores: KeyStore[] | undefined;
-    for (const keyStore of keystores) {
-      const { address, seed } = await decrypt(keyStore, normalisedPassword);
+    const addressMigrations: AddressMigration[] = [];
+    for (const [index, keyStore] of keystores.entries()) {
+      const { address, seed } = await decryptKeystore(
+        keyStore,
+        normalisedPassword,
+      );
       keys.push({
         address,
         mnemonicPhrases: getMnemonicFromHexSeed(seed),
       });
+      const hasLegacyAddress = isLegacyAddressLabel(keyStore.address);
+      if (hasLegacyAddress) {
+        addressMigrations.push({ from: keyStore.address, to: address });
+      }
       if (shouldUpgradeKeystoreParams(keyStore)) {
-        if (!upgradedKeystores) {
-          upgradedKeystores = [...keystores];
-        }
-        const reEncrypted = await encrypt(seed, normalisedPassword);
-        const idx = upgradedKeystores.findIndex(
-          (k) => k.address?.toLowerCase() === keyStore.address?.toLowerCase(),
+        upgradedKeystores ??= [...keystores];
+        upgradedKeystores[index] = await encryptKeystore(
+          seed,
+          normalisedPassword,
         );
-        if (idx >= 0) upgradedKeystores[idx] = reEncrypted;
+      } else if (hasLegacyAddress) {
+        // The address label is not covered by the ciphertext, so relabelling
+        // does not need another (expensive) argon2id run.
+        upgradedKeystores ??= [...keystores];
+        upgradedKeystores[index] = {
+          ...keyStore,
+          address: toKeystoreAddressLabel(address),
+        };
       }
     }
-    // Reference the constant so tree-shaking does not drop the import.
-    void RECOMMENDED_KEYSTORE_KDF_PARAMS;
     self.postMessage({
       success: true,
       keys,
       upgradedKeystores,
+      addressMigrations: addressMigrations.length
+        ? addressMigrations
+        : undefined,
     } satisfies UnlockWorkerResponse);
   } catch {
     // decrypt() throws when the password is wrong

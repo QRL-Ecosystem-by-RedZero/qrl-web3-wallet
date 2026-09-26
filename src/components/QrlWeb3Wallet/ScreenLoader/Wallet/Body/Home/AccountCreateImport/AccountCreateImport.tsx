@@ -97,7 +97,7 @@ const AccountCreateImport = observer(() => {
               >
                 <Button className="w-full" type="button">
                   <Send className="mr-2 h-4 w-4" />
-                  {t('home.sendQuanta')}
+                  {t('home.sendQrl')}
                 </Button>
               </Link>
               <Link className="w-full" to={ROUTES.TRANSACTION_HISTORY}>

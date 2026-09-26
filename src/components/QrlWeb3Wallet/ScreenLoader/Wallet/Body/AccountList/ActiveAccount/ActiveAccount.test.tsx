@@ -47,7 +47,7 @@ describe("ActiveAccount", () => {
 
     await openMenu();
     expect(
-      screen.getByRole("menuitem", { name: "Send Quanta" }),
+      screen.getByRole("menuitem", { name: "Send QRL" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: "Copy Address" }),

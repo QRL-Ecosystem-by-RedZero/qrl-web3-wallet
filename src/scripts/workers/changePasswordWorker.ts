@@ -1,15 +1,15 @@
 /**
  * Web Worker that re-encrypts all keystores with a new password.
  *
- * 1. Decrypts each keystore with the old password (CPU-heavy scrypt).
+ * 1. Decrypts each keystore with the old password (CPU-heavy argon2id).
  * 2. Re-encrypts each seed with the new password.
  * 3. Returns the new keystores and decrypted key metadata.
  *
  * Runs in a dedicated thread so the popup UI stays responsive.
  */
 
-import { decrypt, encrypt } from "@theqrl/web3-qrl-accounts";
 import { getMnemonicFromHexSeed } from "@/functions/getMnemonicFromHexSeed";
+import { decryptKeystore, encryptKeystore } from "@/functions/keystoreCrypto";
 import type { KeyStore } from "@theqrl/web3";
 
 export type ChangePasswordWorkerRequest = {
@@ -40,8 +40,8 @@ self.onmessage = async (
     const newKeys: DecryptedKey[] = [];
 
     for (const keyStore of keystores) {
-      const { address, seed } = await decrypt(keyStore, normalisedOld);
-      const reEncrypted = await encrypt(seed, normalisedNew);
+      const { address, seed } = await decryptKeystore(keyStore, normalisedOld);
+      const reEncrypted = await encryptKeystore(seed, normalisedNew);
       newKeystores.push(reEncrypted);
       newKeys.push({
         address,

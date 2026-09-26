@@ -2,6 +2,7 @@ import {
   BlockchainDataType,
   DEFAULT_BLOCKCHAIN,
   QRL_BLOCKCHAINS,
+  normalizeStoredBlockchains,
 } from "@/configuration/qrlBlockchainConfig";
 import {
   ConnectedAccountsDataType,
@@ -260,8 +261,10 @@ class StorageUtil {
     const storedBlockchains = (
       await browser.storage.local.get(BLOCKCHAINS_IDENTIFIER)
     )?.[BLOCKCHAINS_IDENTIFIER];
-    return (storedBlockchains?.[ALL_BLOCKCHAINS_IDENTIFIER] ??
-      QRL_BLOCKCHAINS) as BlockchainDataType[];
+    const blockchains = storedBlockchains?.[ALL_BLOCKCHAINS_IDENTIFIER] as
+      | BlockchainDataType[]
+      | undefined;
+    return blockchains ? normalizeStoredBlockchains(blockchains) : QRL_BLOCKCHAINS;
   }
 
   /**
@@ -626,6 +629,61 @@ class StorageUtil {
   static async getSettings(): Promise<WalletSettings> {
     const storageData = await browser.storage.local.get(SETTINGS_IDENTIFIER);
     return (storageData?.[SETTINGS_IDENTIFIER] ?? {}) as WalletSettings;
+  }
+
+  /**
+   * Moves account data from legacy 20-byte addresses to the 64-byte addresses
+   * derived from the same seeds (QRL testnet v3 onwards). Idempotent.
+   *
+   * - accounts list, active account, labels and hidden flags are re-keyed;
+   * - dApp connections are dropped: they reference the old addresses and the
+   *   retired testnet v2 chain, so the dApp has to ask for access again.
+   * Tokens, NFTs and transaction history stay under the old addresses: they
+   * belong to the retired chain and would not resolve on v3 anyway.
+   */
+  static async migrateAccountAddresses(
+    migrations: { from: string; to: string }[],
+  ) {
+    if (!migrations.length) return;
+    const addressMap = new Map(
+      migrations.map(({ from, to }) => [from.toLowerCase(), to]),
+    );
+    const migrate = (address: string) =>
+      addressMap.get(address?.toLowerCase()) ?? address;
+    const migrateKeys = <T>(record: Record<string, T>) =>
+      Object.fromEntries(
+        Object.entries(record).map(([address, value]) => [
+          migrate(address),
+          value,
+        ]),
+      );
+
+    const storedAccounts =
+      (await browser.storage.local.get(ACCOUNTS_IDENTIFIER))?.[
+        ACCOUNTS_IDENTIFIER
+      ] ?? {};
+    const allAccounts: string[] = storedAccounts[ALL_ACCOUNTS_IDENTIFIER] ?? [];
+    const activeAccount: string | undefined =
+      storedAccounts[ACTIVE_ACCOUNT_IDENTIFIER];
+    await browser.storage.local.set({
+      [ACCOUNTS_IDENTIFIER]: {
+        ...storedAccounts,
+        [ALL_ACCOUNTS_IDENTIFIER]: [...new Set(allAccounts.map(migrate))],
+        ...(activeAccount
+          ? { [ACTIVE_ACCOUNT_IDENTIFIER]: migrate(activeAccount) }
+          : {}),
+      },
+      [ACCOUNT_LABELS_IDENTIFIER]: migrateKeys(await this.getAccountLabels()),
+      [HIDDEN_ACCOUNTS_IDENTIFIER]: migrateKeys(await this.getHiddenAccounts()),
+    });
+
+    const storedDApps = (await browser.storage.local.get(DAPPS_IDENTIFIER))?.[
+      DAPPS_IDENTIFIER
+    ];
+    if (storedDApps?.[ALL_DAPPS_IDENTIFIER]) {
+      delete storedDApps[ALL_DAPPS_IDENTIFIER];
+      await browser.storage.local.set({ [DAPPS_IDENTIFIER]: storedDApps });
+    }
   }
 
   static async clearAllData() {

@@ -24,6 +24,11 @@ import Web3, {
 } from "@theqrl/web3";
 import { action, makeAutoObservable, observable, runInAction } from "mobx";
 
+// Upper bound for the RPC reachability probe. Without it the popup (including
+// the dApp approval screen) spins until the browser's own network timeout
+// whenever the configured node is slow or unreachable.
+const RPC_CONNECTION_TIMEOUT_MS = 5000;
+
 type ActiveAccountType = {
   accountAddress: string;
 };
@@ -80,14 +85,23 @@ class QrlStore {
   }
 
   async initializeBlockchain() {
+    const previousRpcUrl = this.qrlConnection.blockchain.defaultRpcUrl;
     await this.refreshBlockchainData();
-    const qrlHttpProvider = new Web3.providers.HttpProvider(
-      this.qrlConnection.blockchain.defaultRpcUrl || "http://localhost",
-    );
-    const { qrl } = new Web3({ provider: qrlHttpProvider });
-    this.qrlInstance = qrl;
-
-    await this.fetchQrlConnection();
+    const rpcUrl =
+      this.qrlConnection.blockchain.defaultRpcUrl || "http://localhost";
+    // Re-initialising against the same, already reachable node (e.g. right
+    // after unlock) only needs fresh account data; re-probing the node would
+    // flash the loading screen in front of a pending dApp request.
+    const canReuseConnection =
+      !!this.qrlInstance &&
+      this.qrlConnection.isConnected &&
+      previousRpcUrl === this.qrlConnection.blockchain.defaultRpcUrl;
+    if (!canReuseConnection) {
+      const qrlHttpProvider = new Web3.providers.HttpProvider(rpcUrl);
+      const { qrl } = new Web3({ provider: qrlHttpProvider });
+      this.qrlInstance = qrl;
+      await this.fetchQrlConnection();
+    }
     await this.fetchAccounts();
     await this.validateActiveAccount();
   }
@@ -154,7 +168,17 @@ class QrlStore {
   async fetchQrlConnection() {
     this.qrlConnection = { ...this.qrlConnection, isLoading: true };
     try {
-      const isListening = (await this.qrlInstance?.net.isListening()) ?? false;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const isListening =
+        (await Promise.race([
+          this.qrlInstance?.net.isListening(),
+          new Promise<boolean>((resolve) => {
+            timeoutHandle = setTimeout(
+              () => resolve(false),
+              RPC_CONNECTION_TIMEOUT_MS,
+            );
+          }),
+        ]).finally(() => clearTimeout(timeoutHandle))) ?? false;
       runInAction(() => {
         this.qrlConnection = {
           ...this.qrlConnection,

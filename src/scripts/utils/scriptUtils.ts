@@ -32,7 +32,7 @@ export function checkForLastError() {
  * Strips internal fields (notably `stack`) from an error before it is forwarded
  * to a dApp. Preserves the JSON-RPC-relevant fields `code`, `message`, and
  * `data`. Stack traces leak bundled-library file hashes that fingerprint the
- * exact `@theqrl/zond-wallet-provider` version (P-7b).
+ * exact `@theqrl/qrl-wallet-provider` version (P-7b).
  */
 function sanitizeError(error: unknown): {
   code?: number;

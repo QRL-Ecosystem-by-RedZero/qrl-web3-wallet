@@ -49,7 +49,7 @@
   "onboarding.completed.button": "Fertig",
 
   "home.activeAccount": "Aktives Konto",
-  "home.sendQuanta": "Quanta Senden",
+  "home.sendQrl": "QRL senden",
   "home.receive": "Empfangen",
   "home.copyAddress": "Adresse Kopieren",
   "home.rename": "Umbenennen",

@@ -37,11 +37,21 @@ let extensionChannel: Substream;
 // The field below is used to ensure that replay is done only once for each restart.
 let hasExtensionConnectSent = false;
 
+// Reuse one Web3 instance per RPC URL instead of building a new one for every
+// forwarded dApp call.
+let cachedWeb3: { rpcUrl: string; web3: Web3 } | undefined;
+
 const getQrlProperties = async () => {
   const { defaultRpcUrl, defaultWsRpcUrl } =
     await StorageUtil.getActiveBlockChain();
-  const qrlHttpProvider = new Web3.providers.HttpProvider(defaultRpcUrl);
-  const { provider, qrl } = new Web3({ provider: qrlHttpProvider });
+  if (cachedWeb3?.rpcUrl !== defaultRpcUrl) {
+    const qrlHttpProvider = new Web3.providers.HttpProvider(defaultRpcUrl);
+    cachedWeb3 = {
+      rpcUrl: defaultRpcUrl,
+      web3: new Web3({ provider: qrlHttpProvider }),
+    };
+  }
+  const { provider, qrl } = cachedWeb3.web3;
   return { provider, qrl, defaultWsRpcUrl };
 };
 
@@ -213,11 +223,14 @@ const prepareListeners = () => {
       } else if (
         method === UNRESTRICTED_METHODS.QRL_WEB3_WALLET_GET_PROVIDER_STATE
       ) {
-        const chainId = (await qrl?.getChainId())?.toString() ?? "";
-        const networkVersion = (await qrl?.net.getId())?.toString() ?? "";
+        const [chainId, networkId] = await Promise.all([
+          qrl?.getChainId(),
+          qrl?.net.getId(),
+        ]);
         return {
-          chainId: `0x${chainId}`,
-          networkVersion,
+          // getChainId() yields a bigint; the provider expects 0x-hex.
+          chainId: chainId === undefined ? "" : `0x${chainId.toString(16)}`,
+          networkVersion: networkId?.toString() ?? "",
           isUnlocked: false,
           accounts: [],
         } as Parameters<BaseProvider["_initializeState"]>[0];
@@ -377,7 +390,7 @@ const prepareListeners = () => {
           UNRESTRICTED_METHODS.QRL_GET_TRANSACTION_BY_BLOCK_NUMBER_AND_INDEX
       ) {
         const [blockHashOrNumber, transactionIndex] = message?.data?.params ?? [];
-        const transactionInformation = qrl?.getTransactionFromBlock(
+        const transactionInformation = await qrl?.getTransactionFromBlock(
           blockHashOrNumber,
           transactionIndex,
         );
@@ -409,11 +422,18 @@ const prepareListeners = () => {
 
 const keepServiceWorkerActive = () => {
   setInterval(() => {
-    browser.runtime
-      .connect({
+    try {
+      // Connecting is enough to reset the SW idle timer. The port is closed
+      // right away (the SW also drops it) so ports don't pile up — one per
+      // frame every 3 s — and slow down the service worker.
+      const port = browser.runtime.connect({
         name: QRL_POST_MESSAGE_STREAM.CONTENT_SCRIPT_KEEP_ALIVE,
-      })
-      .postMessage(QRL_POST_MESSAGE_STREAM.CONTENT_SCRIPT_KEEP_ALIVE);
+      });
+      port.postMessage(QRL_POST_MESSAGE_STREAM.CONTENT_SCRIPT_KEEP_ALIVE);
+      port.disconnect();
+    } catch {
+      // Extension context invalidated (e.g. extension reloaded).
+    }
   }, 3000);
 };
 

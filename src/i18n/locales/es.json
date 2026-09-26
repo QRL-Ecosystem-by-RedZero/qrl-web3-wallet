@@ -49,7 +49,7 @@
   "onboarding.completed.button": "Listo",
 
   "home.activeAccount": "Cuenta activa",
-  "home.sendQuanta": "Enviar Quanta",
+  "home.sendQrl": "Enviar QRL",
   "home.receive": "Recibir",
   "home.copyAddress": "Copiar Dirección",
   "home.rename": "Renombrar",

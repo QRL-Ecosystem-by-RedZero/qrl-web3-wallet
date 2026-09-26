@@ -6,6 +6,7 @@ import {
   CardTitle,
 } from "@/components/UI/Card";
 import { Separator } from "@/components/UI/Separator";
+import { getBlockExplorerUrl } from "@/configuration/qrlBlockchainConfig";
 import { NATIVE_TOKEN_UNITS_OF_GAS } from "@/constants/nativeToken";
 import { formatFiatCompact } from "@/functions/formatFiat";
 import { getOptimalGasFee } from "@/functions/getOptimalGasFee";
@@ -339,8 +340,9 @@ const TransactionDetail = observer(() => {
     second: "2-digit",
   });
 
-  const hashWithoutPrefix = transactionHash.replace(/^0x/, "");
-  const explorerTxUrl = `https://explorer.theqrl.org/tx/${hashWithoutPrefix}`;
+  const explorerTxUrl = getBlockExplorerUrl(qrlStore.qrlConnection.blockchain, {
+    tx: transactionHash,
+  });
 
   const openInExplorer = () => {
     if (explorerTxUrl) {

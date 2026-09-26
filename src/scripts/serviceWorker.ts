@@ -54,7 +54,10 @@ const registerScripts = async () => {
 
 const prepareListeners = () => {
   // Listening to storage for displaying the badge in the extension.
-  browser.storage.onChanged.addListener(async () => {
+  browser.storage.onChanged.addListener(async (_changes, areaName) => {
+    // Pending dApp requests live in session storage; skip the (frequent)
+    // local-storage writes such as balances, prices and history.
+    if (areaName !== "session") return;
     const storedDAppRequestData = await StorageUtil.getDAppsRequestData();
     if (storedDAppRequestData) {
       // If there is a pending request, the badge with 1 notification will be displayed.
@@ -161,7 +164,7 @@ const setupProviderEngineEip1193 = ({
 /**
  * A method for serving qrl provider over a given stream.
  */
-const setupProviderConnectionEip1193 = async (port: browser.Runtime.Port) => {
+const setupProviderConnectionEip1193 = (port: browser.Runtime.Port) => {
   const portStream = new ExtensionPortStream(port);
   const mux = setupMultiplex(portStream);
   const outStream = mux.createStream(QRL_WALLET_PROVIDER_NAME);
@@ -188,11 +191,15 @@ const setupProviderConnectionEip1193 = async (port: browser.Runtime.Port) => {
 };
 
 const establishContenScriptConnection = () => {
-  browser.runtime.onConnect.addListener(async (port) => {
-    // Ensuring the port connected to is the content script
+  browser.runtime.onConnect.addListener((port) => {
+    // Ensuring the port connected to is the content script. The provider
+    // connection is set up synchronously so the dApp's first request is not
+    // held back behind any other work.
     if (port.name === QRL_POST_MESSAGE_STREAM.CONTENT_SCRIPT) {
-      await announceServiceWorkerReady();
-      await setupProviderConnectionEip1193(port);
+      setupProviderConnectionEip1193(port);
+    } else if (port.name === QRL_POST_MESSAGE_STREAM.CONTENT_SCRIPT_KEEP_ALIVE) {
+      // Opening the port already reset the SW idle timer; don't keep it.
+      port.disconnect();
     }
   });
 };
@@ -240,6 +247,11 @@ const initializeServiceWorker = async () => {
   prepareListeners();
   establishContenScriptConnection();
   establishLockManagerConnection();
+  // Tell already-open dApp tabs (whose ports died with the previous SW
+  // instance) to reconnect. Done once per SW start rather than on every
+  // content-script connection, which used to broadcast to every tab and
+  // delay each new connection behind a tabs.query().
+  announceServiceWorkerReady().catch(checkForLastError);
 
   await enforceSessionStorageAccessLevel();
 

@@ -2,16 +2,29 @@ import {
   DecryptedKeyType,
   EncryptAccountType,
   LOCK_MANAGER_MESSAGES,
+  SESSION_KEYS_STORAGE_KEY,
 } from "@/scripts/lockManager/lockManager";
 import type {
   ChangePasswordWorkerResponse,
 } from "@/scripts/workers/changePasswordWorker";
+import type { AddressMigration } from "@/scripts/workers/unlockWorker";
 import StorageUtil, { LockState } from "@/utilities/storageUtil";
 import { KeyStore, Web3BaseWalletAccount } from "@theqrl/web3";
 import { action, makeAutoObservable, runInAction } from "mobx";
 import browser from "webextension-polyfill";
 
 const PORT_RECONNECT_DELAY = 1000;
+
+// Storage keys whose changes can flip the lock state. Every other write
+// (balances, prices, tx history, the SW keep-alive heartbeat, ...) used to
+// trigger an IS_LOCKED round trip to the service worker.
+const LOCK_STATE_STORAGE_KEYS = [
+  "KEYSTORES",
+  "ACCOUNTS",
+  "LOCK_MANAGER_LOCKED_TIMESTAMP",
+  "LOCK_MANAGER_UNLOCKED_TIMESTAMP",
+  SESSION_KEYS_STORAGE_KEY,
+];
 
 class LockStore {
   hasPasswordSet = true;
@@ -77,9 +90,7 @@ class LockStore {
    * then start the storage listener.
    */
   private async initialize() {
-    // Give the port connection a moment to wake the SW
-    await new Promise((r) => setTimeout(r, 200));
-
+    // Ask right away; the retry loop below covers a SW that is still waking.
     for (let i = 0; i < 10; i++) {
       try {
         const { isLocked, hasPasswordSet } =
@@ -109,8 +120,10 @@ class LockStore {
   }
 
   initializeStorageListener() {
-    browser.storage.onChanged.addListener(async () => {
-      await this.readLockState();
+    browser.storage.onChanged.addListener(async (changes) => {
+      if (LOCK_STATE_STORAGE_KEYS.some((key) => key in changes)) {
+        await this.readLockState();
+      }
     });
   }
 
@@ -289,21 +302,14 @@ class LockStore {
   }
 
   /**
-   * Unlock the wallet.  The CPU-heavy scrypt decryption runs in a dedicated
-   * Web Worker thread so the popup UI stays fully responsive (spinner animates).
-   * After decryption the keys are sent to the SW for in-memory storage.
-   *
-   * Returns true on success, false on wrong password.
-   * Throws on communication errors so the UI can show a distinct message.
+   * Decrypt `keystores` in a dedicated Web Worker thread so the popup UI stays
+   * responsive. Resolves null on a wrong password or worker error.
    */
-  async unlock(password: string): Promise<boolean> {
-    // Read keystores and decrypt in a Web Worker (separate thread).
-    const keyStores = await StorageUtil.getKeystores();
-    if (!keyStores.length) return false;
-
-    const workerResult = await new Promise<{
+  private runUnlockWorker(keystores: KeyStore[], password: string) {
+    return new Promise<{
       keys: DecryptedKeyType[];
       upgradedKeystores?: KeyStore[];
+      addressMigrations?: AddressMigration[];
     } | null>((resolve) => {
       const worker = new Worker(
         new URL("../scripts/workers/unlockWorker.ts", import.meta.url),
@@ -314,6 +320,7 @@ class LockStore {
           success: boolean;
           keys?: DecryptedKeyType[];
           upgradedKeystores?: KeyStore[];
+          addressMigrations?: AddressMigration[];
         }>,
       ) => {
         worker.terminate();
@@ -321,6 +328,7 @@ class LockStore {
           resolve({
             keys: event.data.keys,
             upgradedKeystores: event.data.upgradedKeystores,
+            addressMigrations: event.data.addressMigrations,
           });
         } else {
           resolve(null);
@@ -330,8 +338,49 @@ class LockStore {
         worker.terminate();
         resolve(null);
       };
-      worker.postMessage({ keystores: keyStores, password });
+      worker.postMessage({ keystores, password });
     });
+  }
+
+  /**
+   * Unlock the wallet.  The CPU-heavy argon2id decryption runs in Web Worker
+   * threads so the popup UI stays fully responsive (spinner animates).
+   * After decryption the keys are sent to the SW for in-memory storage.
+   *
+   * Returns true on success, false on wrong password.
+   * Throws on communication errors so the UI can show a distinct message.
+   */
+  async unlock(password: string): Promise<boolean> {
+    const keyStores = await StorageUtil.getKeystores();
+    if (!keyStores.length) return false;
+
+    // Every keystore has its own salt, so each one costs a full argon2id run
+    // (~256 MiB). Split them across two workers on multi-core machines to
+    // roughly halve unlock time for multi-account wallets.
+    const workerCount =
+      keyStores.length > 1 && (navigator.hardwareConcurrency ?? 1) >= 4 ? 2 : 1;
+    const chunkSize = Math.ceil(keyStores.length / workerCount);
+    const chunks = Array.from({ length: workerCount }, (_, i) =>
+      keyStores.slice(i * chunkSize, (i + 1) * chunkSize),
+    );
+    const chunkResults = await Promise.all(
+      chunks.map((chunk) => this.runUnlockWorker(chunk, password)),
+    );
+    const workerResult = chunkResults.every(Boolean)
+      ? {
+          keys: chunkResults.flatMap((result) => result!.keys),
+          upgradedKeystores: chunkResults.some(
+            (result) => result!.upgradedKeystores,
+          )
+            ? chunkResults.flatMap(
+                (result, i) => result!.upgradedKeystores ?? chunks[i],
+              )
+            : undefined,
+          addressMigrations: chunkResults.flatMap(
+            (result) => result!.addressMigrations ?? [],
+          ),
+        }
+      : null;
 
     if (!workerResult) {
       // Wrong password or worker error
@@ -339,9 +388,26 @@ class LockStore {
     }
     const decryptedKeys = workerResult.keys;
 
-    // If the worker re-encrypted any keystores with stronger KDF parameters,
-    // persist them in place of the previous keystores so the user benefits
-    // automatically without re-entering their password.
+    // Keystores written before QRL testnet v3 carry 20-byte addresses. Move
+    // the account data over to the 64-byte addresses first: if persisting the
+    // relabelled keystores below fails, the next unlock simply redoes this
+    // (idempotent) step.
+    if (workerResult.addressMigrations.length) {
+      try {
+        await StorageUtil.migrateAccountAddresses(
+          workerResult.addressMigrations,
+        );
+      } catch (error) {
+        console.warn("QrlWeb3Wallet: failed to migrate account addresses", error);
+        throw new Error(
+          "Unable to update your accounts to the new QRL address format. Please try again.",
+        );
+      }
+    }
+
+    // If the worker re-encrypted any keystores with stronger KDF parameters
+    // (or relabelled legacy addresses), persist them in place of the previous
+    // keystores so the user benefits without taking any explicit action.
     if (workerResult.upgradedKeystores?.length) {
       try {
         await StorageUtil.setKeystores(workerResult.upgradedKeystores);

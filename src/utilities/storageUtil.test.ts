@@ -42,7 +42,7 @@ vi.mock("@/configuration/qrlBlockchainConfig", () => ({
     chainName: "Test Chain",
     rpcUrls: ["http://localhost:8545"],
     blockExplorerUrls: [""],
-    nativeCurrency: { name: "Quanta", symbol: "QRL", decimals: 18 },
+    nativeCurrency: { name: "QRL", symbol: "QRL", decimals: 18 },
     iconUrls: [],
   },
   QRL_BLOCKCHAINS: [
@@ -51,10 +51,11 @@ vi.mock("@/configuration/qrlBlockchainConfig", () => ({
       chainName: "Test Chain",
       rpcUrls: ["http://localhost:8545"],
       blockExplorerUrls: [""],
-      nativeCurrency: { name: "Quanta", symbol: "QRL", decimals: 18 },
+      nativeCurrency: { name: "QRL", symbol: "QRL", decimals: 18 },
       iconUrls: [],
     },
   ],
+  normalizeStoredBlockchains: (chains: unknown) => chains,
 }));
 
 vi.mock("@theqrl/web3", () => ({
@@ -242,7 +243,7 @@ describe("StorageUtil", () => {
       chainName: "Chain 1",
       rpcUrls: ["http://localhost:8545"],
       blockExplorerUrls: [""],
-      nativeCurrency: { name: "Quanta", symbol: "QRL", decimals: 18 },
+      nativeCurrency: { name: "QRL", symbol: "QRL", decimals: 18 },
       iconUrls: [],
     };
     const chain2 = {
@@ -250,7 +251,7 @@ describe("StorageUtil", () => {
       chainName: "Chain 2",
       rpcUrls: ["http://localhost:8546"],
       blockExplorerUrls: [""],
-      nativeCurrency: { name: "Quanta", symbol: "QRL", decimals: 18 },
+      nativeCurrency: { name: "QRL", symbol: "QRL", decimals: 18 },
       iconUrls: [],
     };
 
@@ -934,6 +935,50 @@ describe("StorageUtil", () => {
     it("should return empty array for account with no history", async () => {
       const result = await StorageUtil.getPendingTransactions(ACCOUNT);
       expect(result).toEqual([]);
+    });
+  });
+
+  describe("migrateAccountAddresses", () => {
+    const NEW_ACCOUNT = `Q${"Ab".repeat(64)}`;
+
+    it("re-keys account data to the 64-byte address and drops dApp connections", async () => {
+      await StorageUtil.setAllAccounts([ACCOUNT, ACCOUNT_2]);
+      await StorageUtil.setActiveAccount(ACCOUNT);
+      await StorageUtil.setAccountLabels({ [ACCOUNT]: "Main" });
+      await StorageUtil.setHiddenAccounts({ [ACCOUNT]: true });
+      await StorageUtil.setDAppsConnectedAccountsData({
+        urlOrigin: "https://dapp.example",
+        accounts: [ACCOUNT],
+        blockchains: [],
+        permissions: [],
+      });
+
+      await StorageUtil.migrateAccountAddresses([
+        { from: ACCOUNT.toLowerCase(), to: NEW_ACCOUNT },
+      ]);
+
+      expect(await StorageUtil.getAllAccounts()).toEqual([
+        NEW_ACCOUNT,
+        ACCOUNT_2,
+      ]);
+      expect(await StorageUtil.getActiveAccount()).toBe(NEW_ACCOUNT);
+      expect(await StorageUtil.getAccountLabels()).toEqual({
+        [NEW_ACCOUNT]: "Main",
+      });
+      expect(await StorageUtil.getHiddenAccounts()).toEqual({
+        [NEW_ACCOUNT]: true,
+      });
+      expect(
+        await StorageUtil.getDAppsConnectedAccountsData("https://dapp.example"),
+      ).toBeUndefined();
+    });
+
+    it("is idempotent", async () => {
+      await StorageUtil.setAllAccounts([ACCOUNT]);
+      const migrations = [{ from: ACCOUNT, to: NEW_ACCOUNT }];
+      await StorageUtil.migrateAccountAddresses(migrations);
+      await StorageUtil.migrateAccountAddresses(migrations);
+      expect(await StorageUtil.getAllAccounts()).toEqual([NEW_ACCOUNT]);
     });
   });
 });

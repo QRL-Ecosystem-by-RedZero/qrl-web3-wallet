@@ -1,7 +1,7 @@
 import StorageUtil, { LockState } from "@/utilities/storageUtil";
 import { Bytes } from "@theqrl/web3";
-import { decrypt, encrypt } from "@theqrl/web3-qrl-accounts";
 import { getMnemonicFromHexSeed } from "@/functions/getMnemonicFromHexSeed";
+import { decryptKeystore, encryptKeystore } from "@/functions/keystoreCrypto";
 import browser from "webextension-polyfill";
 
 type MessageType = {
@@ -44,10 +44,23 @@ export const LOCK_MANAGER_MESSAGES = {
   SEND_TX_NOTIFICATION: "SEND_TX_NOTIFICATION",
 } as const;
 
+// Session-storage key holding the decrypted-keys backup across SW restarts.
+export const SESSION_KEYS_STORAGE_KEY = "_LM_CACHED_KEYS";
+
+const HANDLED_MESSAGE_NAMES = new Set<string>([
+  LOCK_MANAGER_MESSAGES.IS_LOCKED,
+  LOCK_MANAGER_MESSAGES.SET_DECRYPTED_KEYS,
+  LOCK_MANAGER_MESSAGES.LOCK,
+  LOCK_MANAGER_MESSAGES.UPDATE_AUTO_LOCK,
+  LOCK_MANAGER_MESSAGES.GET_DECRYPTED_KEYS,
+  LOCK_MANAGER_MESSAGES.GET_WALLET_PASSWORD,
+  LOCK_MANAGER_MESSAGES.ENCRYPT_ACCOUNT,
+]);
+
 /**
  * The lock manager, which is part of the extension service worker handles lock related data and functions.
  *
- * IMPORTANT: CPU-heavy cryptographic operations (decrypt / encrypt via scrypt)
+ * IMPORTANT: CPU-heavy cryptographic operations (decrypt / encrypt via argon2id)
  * are performed in the popup, NOT in the service worker.  The popup sends the
  * resulting keys to the SW via the SET_DECRYPTED_KEYS message so that the SW
  * only stores them in memory.  This avoids Chrome killing the SW mid-decrypt.
@@ -59,7 +72,7 @@ class LockManager {
   private static walletPassword?: string;
   static readonly AUTO_LOCK_ALARM = "QRL_AUTO_LOCK";
   static readonly KEEP_ALIVE_ALARM = "QRL_KEEP_ALIVE";
-  private static readonly SESSION_KEYS_KEY = "_LM_CACHED_KEYS";
+  private static readonly SESSION_KEYS_KEY = SESSION_KEYS_STORAGE_KEY;
 
   static async lock() {
     this.clearDecryptedKeys();
@@ -168,7 +181,10 @@ class LockManager {
         // Yield the event loop between decryptions so Chrome
         // doesn't consider the service worker unresponsive.
         await new Promise((r) => setTimeout(r, 0));
-        const { address, seed } = await decrypt(keyStore, normalisedPassword);
+        const { address, seed } = await decryptKeystore(
+          keyStore,
+          normalisedPassword,
+        );
         decryptedKeys.push({
           address,
           mnemonicPhrases: getMnemonicFromHexSeed(seed),
@@ -240,7 +256,10 @@ class LockManager {
     const { password: rawPassword, seed } = accountData;
     const password = rawPassword.normalize("NFC");
     const keystores = await StorageUtil.getKeystores();
-    const encryptedKeyStore = await encrypt(seed, password);
+    const encryptedKeyStore = await encryptKeystore(
+      seed as string | Uint8Array,
+      password,
+    );
     const updatedKeyStores = [...keystores, encryptedKeyStore];
     await StorageUtil.setKeystores(
       Array.from(
@@ -292,7 +311,23 @@ class LockManager {
     this.decryptedKeys = undefined;
   }
 
-  static async lockManagerListener(
+  /**
+   * runtime.onMessage entry point. Must return `undefined` synchronously for
+   * messages it does not own: returning a Promise claims the message channel,
+   * so the old async listener answered (and re-armed the auto-lock alarm, a
+   * storage read + alarm write) for every message, including dApp responses.
+   */
+  static lockManagerListener(
+    message: MessageType,
+    sender?: browser.Runtime.MessageSender,
+  ) {
+    if (!HANDLED_MESSAGE_NAMES.has(message?.name)) {
+      return undefined;
+    }
+    return LockManager.handleLockManagerMessage(message, sender);
+  }
+
+  private static async handleLockManagerMessage(
     message: MessageType,
     sender?: browser.Runtime.MessageSender,
   ) {

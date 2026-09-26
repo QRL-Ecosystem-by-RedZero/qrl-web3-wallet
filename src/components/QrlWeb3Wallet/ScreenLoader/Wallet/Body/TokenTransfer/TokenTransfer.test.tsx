@@ -134,11 +134,11 @@ describe("TokenTransfer", () => {
     const cancelButton = screen.getByRole("button", { name: "Cancel" });
     expect(cancelButton).toBeInTheDocument();
     expect(cancelButton).toBeEnabled();
-    const sendQuantaButton = screen.getByRole("button", {
+    const sendQrlButton = screen.getByRole("button", {
       name: "Send QRL",
     });
-    expect(sendQuantaButton).toBeInTheDocument();
-    expect(sendQuantaButton).toBeDisabled();
+    expect(sendQrlButton).toBeInTheDocument();
+    expect(sendQrlButton).toBeDisabled();
   });
 
   it("should enable the send quanta button once receiver address, amount and mnemonic phrases are entered", async () => {
@@ -158,11 +158,11 @@ describe("TokenTransfer", () => {
       },
       { timeout: 5000 },
     );
-    const sendQuantaButton = screen.getByRole("button", {
+    const sendQrlButton = screen.getByRole("button", {
       name: "Send QRL",
     });
-    expect(sendQuantaButton).toBeInTheDocument();
-    expect(sendQuantaButton).toBeEnabled();
+    expect(sendQrlButton).toBeInTheDocument();
+    expect(sendQrlButton).toBeEnabled();
   });
 
   it("should display the error message if amount is not valid", async () => {

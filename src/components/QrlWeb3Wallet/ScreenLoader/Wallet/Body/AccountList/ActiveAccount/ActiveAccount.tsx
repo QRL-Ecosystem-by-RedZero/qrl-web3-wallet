@@ -136,7 +136,7 @@ const ActiveAccount = observer(() => {
                   >
                     <div className="flex gap-2">
                       <Send size="16" />
-                      <span>{t('home.sendQuanta')}</span>
+                      <span>{t('home.sendQrl')}</span>
                     </div>
                   </DropdownMenuItem>
                   <DropdownMenuItem
