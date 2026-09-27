@@ -50,6 +50,8 @@
 
   "home.activeAccount": "Cuenta activa",
   "home.sendQrl": "Enviar QRL",
+  "home.legacyAddressChain.title": "Red no compatible",
+  "home.legacyAddressChain.description": "{{chainName}} todavía usa las antiguas direcciones QRL de 20 bytes. Esta billetera usa las direcciones actuales de 64 bytes, por lo que en esta red no se pueden leer saldos ni enviar transacciones. Cambia a QRL Testnet v3 o a un nodo con la versión actual de go-qrl.",
   "home.receive": "Recibir",
   "home.copyAddress": "Copiar Dirección",
   "home.rename": "Renombrar",

@@ -108,14 +108,12 @@ const QrlSendTransactionForContent = observer(
       value,
       data,
       receipt,
-      isQrlTransfer,
     }: {
       from: string;
       to?: string;
       value?: string | bigint | number;
       data?: string;
       receipt: DAppTransactionReceipt;
-      isQrlTransfer: boolean;
     }) => {
       const transactionHash = receipt?.transactionHash;
       if (!transactionHash) return;
@@ -129,9 +127,9 @@ const QrlSendTransactionForContent = observer(
               ? value
               : BigInt(value)
             : 0n;
-        const amount = isQrlTransfer
-          ? Number(utils.fromPlanck(valueAsBigInt, "quanta"))
-          : 0;
+        // Payable contract calls (data + value) move QRL too, so the amount
+        // comes from `value` whatever the request type.
+        const amount = Number(utils.fromPlanck(valueAsBigInt, "quanta"));
         const entry: TransactionHistoryEntry = {
           id: transactionHash,
           from,
@@ -235,7 +233,6 @@ const QrlSendTransactionForContent = observer(
               value,
               data,
               receipt: transactionReceipt as DAppTransactionReceipt,
-              isQrlTransfer: false,
             });
           }
         } else {
@@ -336,7 +333,6 @@ const QrlSendTransactionForContent = observer(
               to,
               value,
               receipt: transactionReceipt as DAppTransactionReceipt,
-              isQrlTransfer: true,
             });
           }
         } else {

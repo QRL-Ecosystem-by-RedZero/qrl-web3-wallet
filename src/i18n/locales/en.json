@@ -50,6 +50,8 @@
 
   "home.activeAccount": "Active account",
   "home.sendQrl": "Send QRL",
+  "home.legacyAddressChain.title": "Unsupported network",
+  "home.legacyAddressChain.description": "{{chainName}} still uses the old 20-byte QRL addresses. This wallet uses the current 64-byte addresses, so balances cannot be read and transactions cannot be sent on this network. Switch to QRL Testnet v3 or a node running the current go-qrl.",
   "home.receive": "Receive",
   "home.copyAddress": "Copy Address",
   "home.rename": "Rename",

@@ -1,8 +1,10 @@
+import { Alert, AlertDescription, AlertTitle } from "@/components/UI/Alert";
 import withSuspense from "@/functions/withSuspense";
 import { useStore } from "@/stores/store";
-import { Loader } from "lucide-react";
+import { Loader, ShieldAlert } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { lazy } from "react";
+import { useTranslation } from "react-i18next";
 
 const AccountCreateImport = withSuspense(
   lazy(
@@ -24,7 +26,8 @@ const BackgroundVideo = withSuspense(
 const Home = observer(() => {
   const { qrlStore } = useStore();
   const { qrlConnection } = qrlStore;
-  const { isLoading } = qrlConnection;
+  const { isLoading, hasLegacyAddressFormat, blockchain } = qrlConnection;
+  const { t } = useTranslation();
 
   return (
     <>
@@ -33,7 +36,20 @@ const Home = observer(() => {
         {isLoading ? (
           <Loader className="animate-spin text-foreground" size="86" />
         ) : (
-          <AccountCreateImport />
+          <>
+            {hasLegacyAddressFormat && (
+              <Alert className="mb-4 w-full" variant="destructive">
+                <ShieldAlert className="h-4 w-4" />
+                <AlertTitle>{t("home.legacyAddressChain.title")}</AlertTitle>
+                <AlertDescription className="text-xs">
+                  {t("home.legacyAddressChain.description", {
+                    chainName: blockchain.chainName,
+                  })}
+                </AlertDescription>
+              </Alert>
+            )}
+            <AccountCreateImport />
+          </>
         )}
       </div>
     </>

@@ -44,6 +44,7 @@ const mockedStoreValues: StoreType = {
     qrlConnection: {
       isConnected: true,
       isLoading: false,
+      hasLegacyAddressFormat: false,
       blockchain: DEFAULT_BLOCKCHAIN,
     },
     qrlInstance: undefined,

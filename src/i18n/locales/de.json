@@ -50,6 +50,8 @@
 
   "home.activeAccount": "Aktives Konto",
   "home.sendQrl": "QRL senden",
+  "home.legacyAddressChain.title": "Nicht unterstütztes Netzwerk",
+  "home.legacyAddressChain.description": "{{chainName}} verwendet noch die alten 20-Byte-QRL-Adressen. Diese Wallet nutzt die aktuellen 64-Byte-Adressen, daher können in diesem Netzwerk weder Guthaben gelesen noch Transaktionen gesendet werden. Wechsle zu QRL Testnet v3 oder zu einem Node mit aktuellem go-qrl.",
   "home.receive": "Empfangen",
   "home.copyAddress": "Adresse Kopieren",
   "home.rename": "Umbenennen",

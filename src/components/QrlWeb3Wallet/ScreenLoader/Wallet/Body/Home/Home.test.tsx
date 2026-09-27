@@ -50,4 +50,24 @@ describe("Home", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  it("should warn when the node only supports legacy 20-byte addresses", () => {
+    renderComponent(
+      mockedStore({
+        qrlStore: { qrlConnection: { hasLegacyAddressFormat: true } },
+      }),
+    );
+
+    expect(screen.getByText("Unsupported network")).toBeInTheDocument();
+    expect(
+      screen.getByText(/still uses the old 20-byte QRL addresses/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Mocked Account Create Import")).toBeInTheDocument();
+  });
+
+  it("should not warn on networks using 64-byte addresses", () => {
+    renderComponent();
+
+    expect(screen.queryByText("Unsupported network")).not.toBeInTheDocument();
+  });
 });

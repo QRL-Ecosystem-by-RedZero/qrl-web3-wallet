@@ -110,6 +110,9 @@ describe("QrlSendTransactionForContent", () => {
         signAndSerializeTransaction: async () => "0xledgersigned",
         ...overrides.ledgerStore,
       } as any,
+      ...(overrides.transactionHistoryStore && {
+        transactionHistoryStore: overrides.transactionHistoryStore,
+      }),
     });
   };
 
@@ -288,6 +291,53 @@ describe("QrlSendTransactionForContent", () => {
     // And the signed transaction must carry that same value.
     const signedTx = mockSignTransaction.mock.calls[0][0] as Record<string, unknown>;
     expect(signedTx.value).toBe("0x30");
+  });
+
+  it("should record the QRL sent with a payable contract call in history", async () => {
+    const mockAddTransaction = vi.fn<any>().mockResolvedValue(undefined);
+    // 30 QRL attached to a contract call (data + value).
+    const payableCall = {
+      ...contractInteractionRequest,
+      value: "0x1a055690d9db80000",
+    };
+
+    renderComponent(
+      createStoreWithCallback({
+        requestParams: payableCall,
+        qrlStore: {
+          qrlInstance: {
+            getGasPrice: async () => BigInt(1000),
+            getTransactionCount: async () => 0,
+            getChainId: async () => 1,
+            accounts: {
+              signTransaction: async () => ({ rawTransaction: "0xsigned" }),
+            },
+            sendSignedTransaction: vi.fn<any>().mockResolvedValue({
+              transactionHash: "0xpayablehash",
+              status: 1n,
+              blockNumber: 10n,
+              gasUsed: 21000n,
+              effectiveGasPrice: 1000n,
+            }),
+          } as any,
+        },
+        transactionHistoryStore: { addTransaction: mockAddTransaction },
+      }),
+      { transactionType: SEND_TRANSACTION_TYPES.CONTRACT_INTERACTION },
+    );
+
+    await act(async () => {
+      await capturedPermissionCallback!(true);
+    });
+
+    expect(mockAddTransaction).toHaveBeenCalledWith(
+      payableCall.from,
+      expect.objectContaining({
+        transactionHash: "0xpayablehash",
+        amount: 30,
+        data: payableCall.data,
+      }),
+    );
   });
 
   it("should render the qrl send transaction component for QRL transfer", async () => {

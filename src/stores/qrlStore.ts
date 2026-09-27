@@ -29,6 +29,24 @@ import { action, makeAutoObservable, observable, runInAction } from "mobx";
 // whenever the configured node is slow or unreachable.
 const RPC_CONNECTION_TIMEOUT_MS = 5000;
 
+// Nodes built before QRL moved to 64-byte addresses (e.g. Gqrl v0.2.x
+// devnets) reject them with "hex string has length 128, want 40".
+const LEGACY_ADDRESS_ERROR = /want 40 for common\.Address/i;
+const ADDRESS_FORMAT_PROBE = `Q${"0".repeat(128)}`;
+
+const withTimeout = <T>(promise: Promise<T> | undefined, fallback: T) => {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise ?? Promise.resolve(fallback),
+    new Promise<T>((resolve) => {
+      timeoutHandle = setTimeout(
+        () => resolve(fallback),
+        RPC_CONNECTION_TIMEOUT_MS,
+      );
+    }),
+  ]).finally(() => clearTimeout(timeoutHandle));
+};
+
 type ActiveAccountType = {
   accountAddress: string;
 };
@@ -48,6 +66,9 @@ class QrlStore {
   qrlConnection = {
     isConnected: false,
     isLoading: false,
+    // True when the node only understands the legacy 20-byte addresses, so
+    // this wallet's 64-byte accounts cannot be used on it.
+    hasLegacyAddressFormat: false,
     blockchain: DEFAULT_BLOCKCHAIN,
   };
   qrlAccounts: QrlAccountsType = { accounts: [], isLoading: false };
@@ -168,31 +189,48 @@ class QrlStore {
   async fetchQrlConnection() {
     this.qrlConnection = { ...this.qrlConnection, isLoading: true };
     try {
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const isListening =
-        (await Promise.race([
-          this.qrlInstance?.net.isListening(),
-          new Promise<boolean>((resolve) => {
-            timeoutHandle = setTimeout(
-              () => resolve(false),
-              RPC_CONNECTION_TIMEOUT_MS,
-            );
-          }),
-        ]).finally(() => clearTimeout(timeoutHandle))) ?? false;
+        (await withTimeout(this.qrlInstance?.net.isListening(), false)) ??
+        false;
+      const hasLegacyAddressFormat =
+        isListening && (await this.detectLegacyAddressFormat());
       runInAction(() => {
         this.qrlConnection = {
           ...this.qrlConnection,
           isConnected: isListening,
+          hasLegacyAddressFormat,
         };
       });
     } catch {
       runInAction(() => {
-        this.qrlConnection = { ...this.qrlConnection, isConnected: false };
+        this.qrlConnection = {
+          ...this.qrlConnection,
+          isConnected: false,
+          hasLegacyAddressFormat: false,
+        };
       });
     } finally {
       runInAction(() => {
         this.qrlConnection = { ...this.qrlConnection, isLoading: false };
       });
+    }
+  }
+
+  private async detectLegacyAddressFormat() {
+    try {
+      await withTimeout(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (this.qrlInstance as any)?.requestManager?.send({
+          method: "qrl_getBalance",
+          params: [ADDRESS_FORMAT_PROBE, "latest"],
+        }),
+        undefined,
+      );
+      return false;
+    } catch (error) {
+      return LEGACY_ADDRESS_ERROR.test(
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 
