@@ -1,10 +1,9 @@
 import { JsonRpcMiddleware } from "@theqrl/qrl-wallet-provider/json-rpc-engine";
 import { providerErrors } from "@theqrl/qrl-wallet-provider/rpc-errors";
 import { Json, JsonRpcRequest } from "@theqrl/qrl-wallet-provider/utils";
-import browser from "webextension-polyfill";
 import { UNRESTRICTED_METHODS } from "../constants/requestConstants";
-import { EXTENSION_MESSAGES } from "../constants/streamConstants";
 import { checkUrlOriginHasBeenConnected } from "../utils/restrictedMethodsMiddlewareUtils";
+import { handleUnrestrictedMethod } from "../utils/unrestrictedMethodHandler";
 
 const QRL_WALLET_DAPP_CONNECTION_REQUIRED_METHODS: string[] = [
   UNRESTRICTED_METHODS.QRL_ACCOUNTS,
@@ -24,16 +23,6 @@ const checkRequestCanProceed = async (req: JsonRpcRequest<JsonRpcRequest>) => {
     canProceed: true,
     proceedError: providerErrors.unsupportedMethod(),
   };
-};
-
-const getUnrestrictedMethodResult = async (
-  req: JsonRpcRequest<JsonRpcRequest>,
-) => {
-  const tabId = req?.senderData?.tabId ?? 0;
-  return await browser.tabs.sendMessage(tabId, {
-    name: EXTENSION_MESSAGES.UNRESTRICTED_METHOD_CALLS,
-    data: req,
-  });
 };
 
 type UnrestrictedMethodValue =
@@ -58,7 +47,7 @@ export const unrestrictedMethodsMiddleware: JsonRpcMiddleware<
     }
 
     try {
-      res.result = await getUnrestrictedMethodResult(req);
+      res.result = (await handleUnrestrictedMethod(req)) as Json;
     } catch (error: unknown) {
       res.error = providerErrors.unsupportedMethod({
         message: error instanceof Error ? error.message : String(error),
